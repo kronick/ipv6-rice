@@ -14,21 +14,40 @@
 #include "cinder/Capture.h"
 #include "cinder/gl/Texture.h"
 #include "CinderOpenCV.h"
+#include "cinder/thread.h"
 #include "ExtendedBlobDetector.h"
 #include "Grain.h"
+#include "Label.h"
+#include "LabelManager.h"
 
 class RiceApp : public ci::app::AppBasic {
 public:
 	void setup();
+    void shutdown();
 	void mouseDown(ci::app::MouseEvent event);
     void mouseDrag(ci::app::MouseEvent event);
 	void keyDown(ci::app::KeyEvent event);
 	void update();
 	void draw();
+    void drawLabel(Label &l);
+    bool saveGrainImage(const Grain &g);
     
+    void processCamera();
+    
+    std::thread cameraThread;
+    bool runCamera;
+
+    int ipCounter;
+    std::string ipPrefix;
+    std::string grainImageDirectory;
+    float downsample;
+    bool newCameraFrame;
+    float beltSpeed;
+    float beltXOffset;
     ci::Capture capture;
-    ci::gl::Texture texture;
-    ci::Surface camSurface;
+    ci::gl::Texture cameraTexture;
+    ci::gl::Texture oldCameraTexture;
+    ci::Surface cameraSurface;
     cv::ExtendedBlobDetector blobDetector;
     cv::SimpleBlobDetector::Params blobParams;
     std::vector< std::vector<cv::Point> > blobContours;
@@ -37,7 +56,9 @@ public:
     
     std::vector<Grain> grains;
     
+    LabelManager labelMan;
     ci::Font infoFont;
+    ci::Font labelFont;
     
     bool drawThreshold;
     

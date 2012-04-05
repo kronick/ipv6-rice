@@ -38,7 +38,10 @@ void ExtendedBlobDetector::detect(const Mat& image,
 		Mat binarizedImage;
 		threshold(grayscaleImage, binarizedImage, thresh, 255, THRESH_BINARY);
         
-		vector<Center> curCenters;
+        // Dilate/erode helps break up clumps
+        cv::dilate(binarizedImage, binarizedImage, Mat(), cv::Point(-1,-1), 3);
+		
+        vector<Center> curCenters;
         vector< vector<Point> > curContours;
 		findBlobContours(grayscaleImage, binarizedImage, curCenters, curContours);
 		vector< vector<Center> > newCenters;

@@ -9,9 +9,11 @@ using namespace cv;
 void RiceApp::setup() {
     //this->setFullScreen(true);
     this->setWindowSize(1280, 720);
+    this->setFrameRate(60);
     try {
-        capture = Capture(1280,720, Capture::getDevices()[0]);
-        //capture = Capture(640,480, Capture::getDevices()[0]);
+        //capture = Capture(960,720, Capture::getDevices()[0]);
+        capture = Capture(1280,720, Capture::getDevices()[0]); downsample = 2;
+        //capture = Capture(640,480, Capture::getDevices()[0]); downsample = 1;
         //capture = Capture(1920,1080, Capture::getDevices()[0]);
         //capture = Capture(1280,1024);
         capture.start();
@@ -20,12 +22,12 @@ void RiceApp::setup() {
         console() << "Couldn't open capture device." << endl;
     }
     
-    blobParams.minThreshold = 160;
-    blobParams.maxThreshold = 180;
-    blobParams.thresholdStep = 10;
-    blobParams.minArea = 50;
-    blobParams.maxArea = 4000;
-    blobParams.minConvexity = 0.1;
+    blobParams.minThreshold = 102;
+    blobParams.maxThreshold = 104;
+    blobParams.thresholdStep = 1;
+    blobParams.minArea = 5;
+    blobParams.maxArea = 1000;
+    blobParams.minConvexity = 0.001;
     blobParams.maxConvexity = 10;
     blobParams.minCircularity = 0.3;
     blobParams.maxCircularity = 1;
@@ -39,13 +41,32 @@ void RiceApp::setup() {
     blobDetector = ExtendedBlobDetector(blobParams);
     blobDetector.create("SimpleBlob");
     
-    infoFont = Font("Helvetica", 24.0f);
+    infoFont = Font("Courier", 24.0f);
+    labelFont = Font("Courier-Bold", 12);
     
     drawThreshold = false;
     
     dottedCircleTexture = loadImage(loadResource("dotted-circle.png"));
     
     grainsFound = 0;
+    beltSpeed = -5;
+    beltXOffset = 0;
+    
+    newCameraFrame = false;
+    runCamera = true;
+    cameraThread = thread(&RiceApp::processCamera, this);
+    
+    ipPrefix = string("2607:f720:100:100::");
+    ipCounter = 0;
+    
+    grainImageDirectory = string("/Library/WebServer/Documents/grain-images/");
+    
+    //cameraThread.join();    
+}
+
+void RiceApp::shutdown() {
+    runCamera = false;
+    cameraThread.join();
 }
 
 void RiceApp::mouseDrag( MouseEvent event ) {
@@ -57,8 +78,8 @@ void RiceApp::mouseDown( MouseEvent event ) {
     (float)this->getWindowHeight() * 255;
     //blobParams.minThreshold = thresh-11;
     //blobParams.maxThreshold = thresh+10;
-    blobParams.minThreshold = thresh - 5;
-    blobParams.maxThreshold = thresh + 6;
+    blobParams.minThreshold = thresh - 1;
+    blobParams.maxThreshold = thresh + 1;
     blobDetector = ExtendedBlobDetector(blobParams);
     blobDetector.create("SimpleBlob");
 }
@@ -67,17 +88,19 @@ void RiceApp::keyDown(KeyEvent event) {
     if(event.getChar() == 'b') {
         drawThreshold = !drawThreshold;
     }
+    if(event.getChar() == 'c') {
+        runCamera = false;
+    }    
 }
 
 void RiceApp::update() {
-	if(capture && capture.checkNewFrame() ) {
-        camSurface = capture.getSurface();
-		Mat input(toOcv(camSurface));
-        Mat output;
-        cv::resize(input, output, cv::Size(), 0.5, 0.5);
-        //output = input;
-        //cv::GaussianBlur(output, output, cv::Size(9,9), 20);
-        blobDetector.detect(output, blobCenters, blobContours);
+    // Transfer surface to OpenGL texture (all OpenGL calls must be in main thread)
+    if(newCameraFrame) {
+        oldCameraTexture = cameraTexture;
+        cameraTexture = gl::Texture(cameraSurface);
+        newCameraFrame = false;
+        beltXOffset = 0;
+        
         blobPolyLines.clear();
         PolyLine<ci::Vec2f> _pl;
         
@@ -106,66 +129,96 @@ void RiceApp::update() {
             }
             
             if(!alreadyExists) {
-                // Add
-                grains.push_back(thisGrain);
-                grainsFound++;
+                if(true || blobCenters[i].pt.x > cameraTexture.getWidth() * .75) {
+                    // Add
+                    grains.push_back(thisGrain);
+                }
             }
             else {
                 // Update
-                grains[bestMatchIndex].center = thisGrain.center;
+                grains[bestMatchIndex].moveTo(thisGrain.center);
                 grains[bestMatchIndex].contour = thisGrain.contour;
-                grains[bestMatchIndex].age = 0;
+                grains[bestMatchIndex].ageSinceUpdate = 0;
             }
+        }        
+    }
+    
+    beltXOffset += beltSpeed;
+
+    labelMan.clear();
+    vector<Grain> survivingGrains;
+    float avgXSpeed;
+    for(int i=0; i<grains.size(); i++) {
+        if(grains[i].ageSinceUpdate < Grain::AGE_LIMIT) {
+            survivingGrains.push_back(grains[i]);
+            avgXSpeed += grains[i].velocity.x;
         }
+    }
+    grains = survivingGrains; 
+    for(int i=0; i<grains.size(); i++) {
+        grains[i].update();
+        labelMan.add(&grains[i].label);
+
+        // Assign the grain an ip address if it's old enough
+        if(grains[i].age == Grain::AGE_THRESHOLD) {
+            // Update label text
+            ostringstream ipAddress;
+            if(ipCounter < (1 << 16)) {
+                ipAddress << ipPrefix << hex << ipCounter;
+            }
+            else {
+                ipAddress << hex << ipPrefix << (ipCounter / (1<<16)) << ":" << ipCounter % (1<<16);
+            }
+            
+            grains[i].setLabel(ipAddress.str());
+            grainsFound++;
+            ipCounter++;
+        }    
         
-        if(drawThreshold) {
-            float thresh = this->getMousePos().y /
-                            (float)this->getWindowHeight() * 255;
-            //cv::cvtColor(input, output, CV_RGB2GRAY);
-            
-            Mat grayscaleImage(input.rows, input.cols, CV_8UC1 );
-            Mat HSVImage;
-            
-            cvtColor(input, HSVImage, CV_RGB2HSV);
-            int mix[] = {1,0};
-            mixChannels(&HSVImage, 1, &grayscaleImage, 1, mix,1);
-            
-            cv::threshold(grayscaleImage, output, thresh, 255, THRESH_BINARY);
-            //cv::erode(output, output, Mat());
-            //cv::GaussianBlur(output, output, cv::Size(9,9), 20);
-            //output = grayscaleImage;
+        // If the grain has survived past the halfway mark, save its image
+        if(grains[i].center.x * downsample < cameraSurface.getWidth() / 2 && grains[i].age > Grain::AGE_THRESHOLD && !grains[i].saved) {
+            grains[i].saved = saveGrainImage(grains[i]);
+            //saveGrainImage(grains[i]);
         }
-        
-        if(!drawThreshold)
-            texture = gl::Texture(camSurface);
-            //texture = gl::Texture(fromOcv(input));
-        else
-            texture = gl::Texture(fromOcv(output));
-        
-        vector<Grain> survivingGrains;
-        for(int i=0; i<grains.size(); i++) {
-            grains[i].update();
-            if(grains[i].age < 7)
-                survivingGrains.push_back(grains[i]);
-        }
-        grains = survivingGrains;
-	}	
+    }    
+    if(grains.size() > 0) {
+        avgXSpeed /= grains.size();
+        beltSpeed = avgXSpeed;
+    }
+    else beltSpeed = 0;
+    beltSpeed = -5.5;
+    //beltSpeed = 0;
+    
+    labelMan.update(1);
 }
 
 void RiceApp::draw() {
 	// clear out the window with black
 	gl::clear( Color( 0, 0, 0 ) ); 
     gl::enableAlphaBlending();
-    if(texture) {
+    if(cameraTexture) {
         glPushMatrix();
         float scaleFactor = min(getWindowWidth() / (float)capture.getWidth(),
                                 getWindowHeight() / (float)capture.getHeight());
+        
+        gl::translate(0, (getWindowHeight() - capture.getHeight() * scaleFactor)/2);
         gl::scale(scaleFactor, scaleFactor);
-        gl::color(255,255,255);
-        gl::draw(texture);
+        gl::color(1,1,1);
+
+        gl::draw(cameraTexture);
         
         glPushMatrix();
-            gl::scale(2,2);
+        gl::translate(beltXOffset, 0);
+        if(oldCameraTexture) {
+            gl::color(1,1,1,0.2);
+            gl::draw(oldCameraTexture);
+        }
+        
+        glPopMatrix();        
+        
+        glPushMatrix();
+            gl::scale(downsample,downsample);
+        
             glEnable(GL_LINE_SMOOTH);
             //glLineWidth(3);
             /*
@@ -185,13 +238,18 @@ void RiceApp::draw() {
                     gl::color(1, 1, 1);
                     glPushMatrix();
                         gl::translate(grains[i].center);
-                        gl::rotate((getElapsedFrames()+i)*5);
-                        gl::draw(dottedCircleTexture, Rectf(-circleSize, -circleSize,
-                                                             circleSize,  circleSize));
+                        gl::rotate((getElapsedFrames()+i)*0.5);
+                        
+                        //gl::draw(dottedCircleTexture, Rectf(-circleSize, -circleSize,
+                        //                                     circleSize,  circleSize));
+                        
                     glPopMatrix();
                 }
             }
+        
         glPopMatrix();
+        
+        labelMan.draw();
         
         glPopMatrix();
         
@@ -222,5 +280,79 @@ void RiceApp::draw() {
     }
 }
 
+bool RiceApp::saveGrainImage(const Grain &g) {
+    try {
+        Area grainRegion(-50,-50, 50,50); grainRegion.offset(g.center * downsample);
+        if(grainRegion.getX1() < 0)
+            grainRegion.offset(ci::Vec2f(-grainRegion.getX1(),0));
+        if(grainRegion.getY1() < 0)
+            grainRegion.offset(ci::Vec2f(0,-grainRegion.getY1()));
+        if(grainRegion.getX2() > cameraSurface.getWidth())
+            grainRegion.offset(ci::Vec2f(cameraSurface.getWidth()-grainRegion.getX2(),0));
+        if(grainRegion.getY2() > cameraSurface.getHeight())
+            grainRegion.offset(ci::Vec2f(0,cameraSurface.getHeight()-grainRegion.getY2()));
+        Surface grainImage = cameraSurface.clone(grainRegion);
+        
+        ostringstream pathStream;
+        pathStream << grainImageDirectory << g.label.text << ".png";
+        string path = pathStream.str();
+        replace(path.begin(), path.end(), ':', '-');
+        
+        writeImage(path, grainImage, ImageTarget::Options(), "png");
+        console() << "Wrote image to: " << pathStream.str() << endl;
+        return true;
+    }
+    catch(ci::Exception e) {
+        console() << "Error writing image." <<endl;
+        return false;
+    }
+}
+
+void RiceApp::processCamera() {
+    while(runCamera) {
+        //usleep(1000000);
+        if(capture && capture.checkNewFrame()) {
+
+            cameraSurface = capture.getSurface();
+            if(cameraSurface == NULL) continue;
+            Mat input(toOcv(cameraSurface));
+            Mat output;
+            if(downsample != 1)
+                cv::resize(input, output, cv::Size(), 1.0/downsample, 1.0/downsample);        
+            else
+                output = input;
+            //cv::GaussianBlur(output, output, cv::Size(9,9), 20);
+            blobDetector.detect(output, blobCenters, blobContours);
+            
+            if(drawThreshold) {
+                //float thresh = this->getMousePos().y /
+                //                (float)this->getWindowHeight() * 255;
+                float thresh = blobParams.minThreshold;
+                //cv::cvtColor(input, output, CV_RGB2GRAY);
+                
+                Mat grayscaleImage(output.rows, output.cols, CV_8UC1 );
+                Mat HSVImage;
+                
+                cvtColor(output, HSVImage, CV_RGB2HSV);
+                int mix[] = {1,0};
+                mixChannels(&HSVImage, 1, &grayscaleImage, 1, mix,1);
+                
+                cv::threshold(grayscaleImage, grayscaleImage, thresh, 255, THRESH_BINARY);
+                cv::dilate(grayscaleImage, grayscaleImage, Mat(), cv::Point(-1,-1), 3);
+                if(downsample != 1)
+                    cv::resize(grayscaleImage, output, cv::Size(), downsample, downsample);   
+                else 
+                    output = grayscaleImage;
+                //cv::dilate(output, output, Mat(), cv::Point(-1,-1), 7);
+                //cv::GaussianBlur(output, output, cv::Size(9,9), 20);
+                //output = grayscaleImage;
+                
+                cameraSurface = fromOcv(output);
+            }
+            
+            newCameraFrame = true;
+        }	    
+    }
+}
 
 CINDER_APP_BASIC( RiceApp, RendererGl )
