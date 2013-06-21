@@ -322,6 +322,7 @@
 				OPENCV_PATH = "/Users/kronick/Documents/cinder/Cinder-OpenCV";
 				OTHER_LDFLAGS = "\"$(CINDER_PATH)/lib/libcinder_d.a\"";
 				PRODUCT_NAME = Rice;
+				SDKROOT = "";
 				WRAPPER_EXTENSION = app;
 			};
 			name = Debug;
@@ -354,6 +355,7 @@
 				OPENCV_PATH = "/Users/kronick/Documents/cinder/Cinder-OpenCV";
 				OTHER_LDFLAGS = "\"$(CINDER_PATH)/lib/libcinder.a\"";
 				PRODUCT_NAME = Rice;
+				SDKROOT = "";
 				STRIP_INSTALLED_PRODUCT = YES;
 				WRAPPER_EXTENSION = app;
 			};

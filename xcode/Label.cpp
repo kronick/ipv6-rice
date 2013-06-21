@@ -33,7 +33,7 @@ Label::Label(Vec2f basePoint, std::string label) {
     yOffset = Rand::randFloat(40, 60);
     if(Rand::randBool()) yOffset *= -1;
     
-    boundingBox = Rectf(0,0, 330,24);
+    boundingBox = Rectf(0,0, 440,24);
     clearSpaceBox = Rectf(0,0, 440,32);
     boundingBox.offsetCenterTo(center);
     clearSpaceBox.offsetCenterTo(center);

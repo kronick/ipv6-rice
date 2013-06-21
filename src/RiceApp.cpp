@@ -1,5 +1,5 @@
 #include "RiceApp.h"
-
+#include <fstream>
 
 using namespace ci;
 using namespace ci::app;
@@ -7,8 +7,8 @@ using namespace std;
 using namespace cv;
 
 void RiceApp::setup() {
-    //this->setFullScreen(true);
-    this->setWindowSize(1280, 720);
+    this->setFullScreen(true);
+    //this->setWindowSize(1280, 1024);
     this->setFrameRate(60);
     try {
         //capture = Capture(960,720, Capture::getDevices()[0]);
@@ -60,6 +60,17 @@ void RiceApp::setup() {
     ipCounter = 0;
     
     grainImageDirectory = string("/Library/WebServer/Documents/grain-images/");
+    ///countFilePath = grainImageDirectory + "../counter.txt";
+    
+    ifstream countStream("/Library/WebServer/Documents/count.txt");
+    string line;
+    if(countStream.is_open()) {
+        if(countStream.good()) {
+            getline(countStream, line);
+            ipCounter = atoi(line.c_str());
+            cout << "Counting begins at: " << ipCounter;
+        }
+    }
     
     //cameraThread.join();    
 }
@@ -189,6 +200,12 @@ void RiceApp::update() {
     beltSpeed = -5.5;
     //beltSpeed = 0;
     
+    if(getElapsedFrames() % 60 == 0) {
+        ofstream countStream("/Library/WebServer/Documents/count.txt");
+        countStream << ipCounter;
+        countStream.close();
+    }
+    
     labelMan.update(1);
 }
 
@@ -257,7 +274,9 @@ void RiceApp::draw() {
         ss << getAverageFps();
         string framerate(ss.str());
         
-        gl::drawString( "Framerate: " + framerate, ci::Vec2f( 10.0f, 20.0f ), Color::white(), infoFont );
+        //gl::drawString( "Framerate: " + framerate, ci::Vec2f( 10.0f, 20.0f ), Color::white(), infoFont );
+        
+        //\\]gl::drawString("http://newuntitledpage.com/rice", ci::Vec2f( 10.0f, 20.0f ), Color::white(), infoFont );
         
         ostringstream ss2;
         float thresh = this->getMousePos().y /
@@ -276,7 +295,7 @@ void RiceApp::draw() {
         ostringstream ss4;
         ss4 << grainsFound/(float)getElapsedSeconds();
         string grainRate(ss4.str());
-        gl::drawString( "Grains/sec: " + grainRate, ci::Vec2f( 10.0f,80.0f ), Color::white(), infoFont );        
+        gl::drawString( "Grains/sec: " + grainRate, ci::Vec2f( 10.0f,80.0f ), Color::white(), infoFont );   
     }
 }
 

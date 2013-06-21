@@ -40,6 +40,7 @@ public:
     int ipCounter;
     std::string ipPrefix;
     std::string grainImageDirectory;
+    std::string countFilePath;
     float downsample;
     bool newCameraFrame;
     float beltSpeed;
